@@ -1,0 +1,1 @@
+This folder is reserved for future computer-vision helpers such as image quality checks, liveness signals, and Phase 2 hand-tracking adapters. Phase 1 keeps the face embedding path isolated in `face_service.py` so the Node API can remain unchanged when recognition capabilities expand.

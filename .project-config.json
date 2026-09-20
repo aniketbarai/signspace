@@ -1,0 +1,42 @@
+{
+  "build_command": "pnpm run build",
+  "capabilities": [
+    "server",
+    "db",
+    "user"
+  ],
+  "dev_command": "pnpm run dev",
+  "env_vars": {
+    "DATABASE_URL": "mysql://eqFULdG4TCcTjf8.root:G52jvdNYlric0kdW974M@gateway05.us-east-1.prod.aws.tidbcloud.com:4000/MGziZpssxCxpoCRgCA2BSp?ssl={\"rejectUnauthorized\":true}"
+  },
+  "experiments": [
+    "no_db_push"
+  ],
+  "git_remote": {
+    "repo_url": "https://7f0548f6b28a1758d9bf7be630d36cb4.artifacts.cloudflare.net/git/prod/MGziZpssxCxpoCRgCA2BSp.git",
+    "expiration": "2026-09-21T07:04:35.030Z",
+    "token": "art_v2_x_678a49e760d63c3babe364f7791736b6f958d167?expires=1789974275",
+    "backend": "GIT_BACKEND_ARTIFACTS"
+  },
+  "name": "sign-language-app",
+  "path": "/home/ubuntu/sign-language-app",
+  "port": 3000,
+  "secrets": {
+    "BUILT_IN_FORGE_API_KEY": "Zypd4X9AbJAHMdDWqSYh3x",
+    "BUILT_IN_FORGE_API_URL": "https://forge.manus.ai",
+    "JWT_SECRET": "8hwpjvgtLTkdJ39GcX56wH",
+    "OAUTH_SERVER_URL": "https://api.manus.im",
+    "OWNER_NAME": "hakete3396",
+    "OWNER_OPEN_ID": "8KpEMv8qx9ywVJFeyrHRXS",
+    "VITE_ANALYTICS_ENDPOINT": "https://manus-analytics.com",
+    "VITE_ANALYTICS_WEBSITE_ID": "357b3c2e-9843-40f3-b331-abd364295fea",
+    "VITE_APP_ID": "MGziZpssxCxpoCRgCA2BSp",
+    "VITE_APP_LOGO": "",
+    "VITE_APP_TITLE": "Sign Language Assistant — Face Authentication",
+    "VITE_FRONTEND_FORGE_API_KEY": "4vPecfKSvFDQqi4JwMypjD",
+    "VITE_FRONTEND_FORGE_API_URL": "https://forge.manus.ai",
+    "VITE_OAUTH_PORTAL_URL": "https://manus.im"
+  },
+  "template_id": "web-db-user",
+  "test_command": "pnpm test"
+}
