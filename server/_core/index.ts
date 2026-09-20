@@ -14,7 +14,7 @@ import { serveStatic, setupVite } from "./vite";
 import authRoutes from "../routes/authRoutes";
 import healthRoutes from "../routes/healthRoutes";
 import userRoutes from "../routes/userRoutes";
-import { config } from "../config/env";
+import { assertProductionConfig, config } from "../config/env";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -36,6 +36,9 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Fails fast if production is about to run with dev-only secrets.
+  assertProductionConfig();
+
   const app = express();
   const server = createServer(app);
   app.disable("x-powered-by");

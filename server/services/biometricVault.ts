@@ -6,7 +6,7 @@ const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 
 function key() {
-  return crypto.createHash("sha256").update(config.jwtSecret).digest();
+  return crypto.createHash("sha256").update(config.biometricVaultSecret).digest();
 }
 
 export function encryptEmbeddings(embeddings: number[][]) {
