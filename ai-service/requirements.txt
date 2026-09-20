@@ -1,7 +1,9 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 numpy==2.2.2
-opencv-python==4.11.0.86
+# opencv-python and opencv-python-headless both provide the `cv2` module and
+# conflict when both are installed. This is a server-side service with no
+# GUI/display needs, so only the headless build is kept.
 opencv-python-headless==4.11.0.86
 deepface==0.0.93
 pydantic==2.10.6

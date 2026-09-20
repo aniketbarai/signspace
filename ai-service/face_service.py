@@ -123,6 +123,7 @@ def _representation(face: np.ndarray) -> list[float]:
             normalization="base",
         )
     except Exception as error:
+        logger.exception("DeepFace.represent failed with model=%s", MODEL_NAME)
         raise FaceInputError("Face embedding generation failed") from error
 
     if len(representations) != 1 or not representations[0].get("embedding"):
