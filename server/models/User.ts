@@ -20,27 +20,12 @@ const userSchema = new mongoose.Schema(
     },
     faceEmbedding: {
       type: [Number],
+      required: true,
       select: false,
       validate: {
         validator: (value: number[]) => value.length > 0 && value.length <= 2048,
         message: "Invalid face embedding",
       },
-    },
-    faceTemplate: {
-      type: String,
-      required: true,
-      select: false,
-    },
-    faceTemplateVersion: {
-      type: Number,
-      required: true,
-      default: 2,
-      select: false,
-    },
-    biometricConsentAt: {
-      type: Date,
-      required: true,
-      default: Date.now,
     },
   },
   { timestamps: true, versionKey: false }

@@ -5,7 +5,6 @@ import { AuthProvider } from "./context/AuthContext";
 import Dashboard from "./pages/Dashboard";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
-import LoginSuccess from "./pages/LoginSuccess";
 import NotFound from "./pages/NotFound";
 import Register from "./pages/Register";
 
@@ -14,7 +13,6 @@ function Router() {
     <Route path="/" component={Home} />
     <Route path="/register" component={Register} />
     <Route path="/login" component={Login} />
-    <Route path="/login-success" component={LoginSuccess} />
     <Route path="/dashboard" component={Dashboard} />
     <Route path="/404" component={NotFound} />
     <Route component={NotFound} />

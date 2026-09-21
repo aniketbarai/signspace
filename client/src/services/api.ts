@@ -11,14 +11,11 @@ const api = axios.create({
   baseURL: "/api",
   withCredentials: true,
   headers: { "Content-Type": "application/json" },
-  timeout: 180000,
+  timeout: 20000,
 });
 
 function messageFromError(error: unknown) {
   if (axios.isAxiosError(error)) {
-    if (error.code === "ECONNABORTED") {
-      return "Face processing is taking longer than expected. Please try again.";
-    }
     return (error.response?.data as { message?: string } | undefined)?.message || "Something went wrong. Please try again.";
   }
   return "Something went wrong. Please try again.";

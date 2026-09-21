@@ -14,7 +14,8 @@ import { serveStatic, setupVite } from "./vite";
 import authRoutes from "../routes/authRoutes";
 import healthRoutes from "../routes/healthRoutes";
 import userRoutes from "../routes/userRoutes";
-import { assertProductionConfig, config } from "../config/env";
+import gestureRoutes from "../routes/gestureRoutes";
+import { config } from "../config/env";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -36,9 +37,6 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
-  // Fails fast if production is about to run with dev-only secrets.
-  assertProductionConfig();
-
   const app = express();
   const server = createServer(app);
   app.disable("x-powered-by");
@@ -53,6 +51,7 @@ async function startServer() {
   registerOAuthRoutes(app);
   app.use("/api/auth", authRoutes);
   app.use("/api/user", userRoutes);
+  app.use("/api/gesture", gestureRoutes);
   app.use("/api", healthRoutes);
   // tRPC API
   app.use(

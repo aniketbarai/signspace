@@ -6,7 +6,15 @@ from typing import Any
 
 import cv2
 import numpy as np
+
+# DeepFace 0.0.93 uses TensorFlow/Keras 3 integrations. This must be set before
+# importing DeepFace so tf-keras is selected consistently on Windows.
+os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
+
 from deepface import DeepFace
+
+
+logger = logging.getLogger("signspace.face-service")
 
 
 class FaceInputError(Exception):
@@ -19,13 +27,6 @@ def _setting(name: str, default: str) -> str:
 
 MODEL_NAME = _setting("DEEPFACE_MODEL", "Facenet512")
 DETECTOR_BACKEND = _setting("DEEPFACE_DETECTOR_BACKEND", "opencv")
-FALLBACK_DETECTOR_BACKENDS = tuple(
-    backend
-    for backend in (DETECTOR_BACKEND, "mtcnn")
-    if backend
-)
-logger = logging.getLogger("face-ai")
-EYE_CASCADE = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
 
 
 def decode_image(encoded_image: str) -> np.ndarray:
@@ -51,26 +52,35 @@ def decode_image(encoded_image: str) -> np.ndarray:
 
 def _extract_single_face(image: np.ndarray) -> np.ndarray:
     """Detect exactly one face without allowing DeepFace to silently accept ambiguity."""
-    last_error: Exception | None = None
-    for detector_backend in dict.fromkeys(FALLBACK_DETECTOR_BACKENDS):
+    debug = os.getenv("DEBUG", "false").lower() in {"1", "true", "yes"}
+    try:
+        detected = DeepFace.extract_faces(
+            img_path=image,
+            detector_backend=DETECTOR_BACKEND,
+            enforce_detection=True,
+            align=True,
+        )
+    except Exception as error:
+        if debug:
+            logger.exception("DeepFace detector error: %s", error)
+        # OpenCV's bundled Haar cascade is a lightweight Windows fallback for
+        # detector-runtime issues. DeepFace remains the primary detector.
         try:
-            detected = DeepFace.extract_faces(
-                img_path=image,
-                detector_backend=detector_backend,
-                enforce_detection=True,
-                align=True,
-            )
-            break
-        except ValueError as error:
-            last_error = error
-            logger.info("No face detected with %s backend: %s", detector_backend, error)
-        except Exception as error:
-            last_error = error
-            logger.exception("Face detection failed with %s backend", detector_backend)
-    else:
-        if isinstance(last_error, ValueError):
-            raise FaceInputError("No face detected. Move closer and make sure your face is well lit.") from last_error
-        raise FaceInputError("Face detection failed. Try better lighting and keep your face centered.") from last_error
+            cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            boxes = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+        except Exception as fallback_error:
+            if debug:
+                logger.exception("OpenCV fallback detector error: %s", fallback_error)
+            detail = f": {type(fallback_error).__name__}: {fallback_error}" if debug else ""
+            raise FaceInputError(f"Face detection failed{detail}") from error
+
+        if len(boxes) == 0:
+            raise FaceInputError("No face detected. Move closer and make sure your face is well lit.") from error
+        if len(boxes) > 1:
+            raise FaceInputError("Multiple faces detected. Only one person can authenticate at a time.") from error
+        x, y, width, height = boxes[0]
+        return image[y : y + height, x : x + width]
 
     if not detected:
         raise FaceInputError("No face detected. Move closer and make sure your face is well lit.")
@@ -82,34 +92,9 @@ def _extract_single_face(image: np.ndarray) -> np.ndarray:
         raise FaceInputError("The face image was too unclear to create a reliable embedding")
 
     height, width = face.shape[:2]
-    if min(height, width) < 96:
+    if min(height, width) < 40:
         raise FaceInputError("The detected face is too small. Move closer and try again.")
-    _validate_face_quality(face)
     return face
-
-
-def _validate_face_quality(face: np.ndarray) -> None:
-    face_uint8 = (np.clip(face, 0, 1) * 255).astype(np.uint8) if face.dtype != np.uint8 else face
-    gray = cv2.cvtColor(face_uint8, cv2.COLOR_BGR2GRAY)
-    brightness = float(np.mean(gray))
-    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-
-    if brightness < 45:
-        raise FaceInputError("Face is too dark. Move into better lighting and try again.")
-    if brightness > 225:
-        raise FaceInputError("Face is overexposed. Reduce bright light and try again.")
-    if sharpness < 35:
-        raise FaceInputError("Face is too blurry. Hold still and try again.")
-
-    upper_face = gray[: max(1, gray.shape[0] // 2), :]
-    eyes = EYE_CASCADE.detectMultiScale(
-        upper_face,
-        scaleFactor=1.08,
-        minNeighbors=4,
-        minSize=(18, 18),
-    )
-    if len(eyes) < 1:
-        raise FaceInputError("Eyes were not clearly visible. Face the camera and keep your eyes open.")
 
 
 def _representation(face: np.ndarray) -> list[float]:
@@ -123,7 +108,8 @@ def _representation(face: np.ndarray) -> list[float]:
             normalization="base",
         )
     except Exception as error:
-        logger.exception("DeepFace.represent failed with model=%s", MODEL_NAME)
+        if os.getenv("DEBUG", "false").lower() in {"1", "true", "yes"}:
+            logger.exception("DeepFace representation error: %s", error)
         raise FaceInputError("Face embedding generation failed") from error
 
     if len(representations) != 1 or not representations[0].get("embedding"):

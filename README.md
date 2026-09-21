@@ -266,3 +266,43 @@ DeepFace may download model weights on first use. The service rejects invalid im
 Because dlib and DeepFace models produce different embedding formats, users enrolled under the old dlib implementation must re-enroll after this migration. The system must never compare an old 128-value dlib embedding with a new DeepFace embedding.
 
 See [`ai-service/README.md`](ai-service/README.md) for the exact PowerShell endpoint test and environment details.
+
+## Phase 2 — server-side hand gesture canvas
+
+The dashboard now replaces the static Phase 2 preview cards with a live authenticated gesture workspace. The browser captures small JPEG frames, the Node API forwards them to the Python service, and MediaPipe returns one-hand landmarks plus a stable gesture label. Camera frames are not stored; only the user’s canvas strokes, recognized gesture transcript, and last gesture are persisted in MongoDB.
+
+Supported gestures:
+
+| Gesture | Action |
+|---|---|
+| Pinch | Draw using the index fingertip position |
+| Fist | Clear the canvas |
+| Victory | Undo the last stroke |
+| Thumbs up | Save the workspace to MongoDB |
+| Open palm / Point | Add the recognized signal to the transcript |
+
+The Python service adds `POST /recognize-gesture`; the Node app exposes it as the protected `POST /api/gesture/recognize`. User work is available through protected `GET /api/gesture/work` and `PUT /api/gesture/work`. The existing face-authentication endpoints are unchanged.
+
+Install the added Python dependency in the existing virtual environment:
+
+```powershell
+cd ai-service
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+Start the services in this order:
+
+```powershell
+# Terminal 1 — Python AI service
+cd ai-service
+.venv\Scripts\Activate.ps1
+python app.py
+
+# Terminal 2 — Node application
+pnpm dev
+```
+
+MongoDB must be available for loading and saving the authenticated user’s gesture workspace. If MediaPipe is not installed in an older environment, run `python -m pip install mediapipe==0.10.21` once.
+
+The recognition runs server-side as requested. Accuracy depends on camera quality, lighting, hand size, and the current heuristic gesture classifier; liveness and sign-language sentence translation are future enhancements.

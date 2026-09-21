@@ -14,7 +14,7 @@ export async function generateEmbedding(imageBuffer: Buffer) {
       `${config.pythonAiUrl.replace(/\/$/, "")}/generate-embedding`,
       { image: imageBuffer.toString("base64") },
       {
-        timeout: 120000,
+        timeout: 15000,
         maxContentLength: 6 * 1024 * 1024,
         maxBodyLength: 6 * 1024 * 1024,
       }

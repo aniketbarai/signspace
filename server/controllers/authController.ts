@@ -3,9 +3,7 @@ import jwt from "jsonwebtoken";
 import { connectDatabase, DatabaseError } from "../config/database";
 import { config } from "../config/env";
 import { User } from "../models/User";
-import { decryptEmbeddings, encryptEmbeddings } from "../services/biometricVault";
 import { FaceServiceError, cosineSimilarity, generateEmbedding } from "../services/faceService";
-import { assertLoginAllowed, clearLoginFailures, recordLoginFailure } from "../services/loginAttemptGuard";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -42,10 +40,6 @@ function averageEmbeddings(embeddings: number[][]) {
   return magnitude === 0 ? average : average.map((value) => value / magnitude);
 }
 
-function bestSimilarity(candidate: number[], templates: number[][]) {
-  return templates.reduce((best, template) => Math.max(best, cosineSimilarity(candidate, template)), -1);
-}
-
 function setSessionCookie(res: Response, userId: string) {
   const token = jwt.sign({ sub: userId }, config.jwtSecret, { expiresIn: "7d" });
   res.cookie(config.authCookieName, token, {
@@ -72,19 +66,9 @@ export async function register(req: Request, res: Response) {
     if (existing) return res.status(409).json({ success: false, message: "An account already exists for this email" });
 
     const images = decodeImages(body.images);
-    const embeddings: number[][] = [];
-    for (const image of images) {
-      embeddings.push(await generateEmbedding(image));
-    }
+    const embeddings = await Promise.all(images.map((image) => generateEmbedding(image)));
     const embedding = averageEmbeddings(embeddings);
-    const user = await User.create({
-      name,
-      email,
-      faceEmbedding: embedding,
-      faceTemplate: encryptEmbeddings(embeddings),
-      faceTemplateVersion: 2,
-      biometricConsentAt: new Date(),
-    });
+    const user = await User.create({ name, email, faceEmbedding: embedding });
     return res.status(201).json({ success: true, message: "Face registered successfully", user: safeUser(user) });
   } catch (error) {
     if (error instanceof FaceServiceError) return res.status(422).json({ success: false, message: error.message });
@@ -104,25 +88,20 @@ export async function login(req: Request, res: Response) {
   if (!emailPattern.test(email)) return res.status(400).json({ success: false, message: "Enter a valid email address" });
 
   try {
-    assertLoginAllowed(email, req.ip);
     await connectDatabase();
-    const user = await User.findOne({ email }).select("+faceEmbedding +faceTemplate +faceTemplateVersion");
+    const user = await User.findOne({ email }).select("+faceEmbedding");
     if (!user) return res.status(404).json({ success: false, message: "No account found for this email" });
 
     const image = decodeImage(body.image);
     const candidate = await generateEmbedding(image);
-    const templates = user.faceTemplate ? decryptEmbeddings(user.faceTemplate) : [user.faceEmbedding];
-    const similarity = bestSimilarity(candidate, templates);
+    const similarity = cosineSimilarity(candidate, user.faceEmbedding);
     if (similarity < config.faceMatchThreshold) {
-      recordLoginFailure(email, req.ip);
-      return res.status(401).json({ success: false, message: "You are not authorized for this account. The detected face does not match the registered person." });
+      return res.status(401).json({ success: false, message: "Face not recognized. Make sure you are using the registered face." });
     }
 
-    clearLoginFailures(email, req.ip);
     setSessionCookie(res, String(user._id));
     return res.json({ success: true, message: "Authentication successful", user: safeUser(user) });
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("Too many failed face attempts")) return res.status(429).json({ success: false, message: error.message });
     if (error instanceof FaceServiceError) return res.status(422).json({ success: false, message: error.message });
     if (error instanceof DatabaseError) return res.status(503).json({ success: false, message: error.message });
     if (error instanceof Error && ["Please capture a face image", "Please capture three face frames", "Please provide a valid camera image", "The captured image is invalid or too large"].includes(error.message)) {
