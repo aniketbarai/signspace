@@ -29,7 +29,7 @@ export async function getWork(req: AuthRequest, res: Response) {
     const work = await GestureWork.findOne({ userId: userId(req) }).lean();
     return res.json({ success: true, work: work ?? { strokes: [], transcript: [], lastGesture: "NO_HAND" } });
   } catch (error) {
-    if (error instanceof DatabaseError) return res.status(503).json({ success: false, message: error.message });
+    if (error instanceof DatabaseError) return res.status(503).json({ success: false, message: error.message, code: error.code });
     return res.status(503).json({ success: false, message: "Gesture work is temporarily unavailable" });
   }
 }
@@ -52,7 +52,7 @@ export async function saveWork(req: AuthRequest, res: Response) {
     ).lean();
     return res.json({ success: true, work });
   } catch (error) {
-    if (error instanceof DatabaseError) return res.status(503).json({ success: false, message: error.message });
+    if (error instanceof DatabaseError) return res.status(503).json({ success: false, message: error.message, code: error.code });
     return res.status(503).json({ success: false, message: "Gesture work could not be saved" });
   }
 }

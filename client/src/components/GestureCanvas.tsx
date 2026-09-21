@@ -1,10 +1,33 @@
-import { BookOpen, Download, Eraser, Hand, Loader2, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
+import {
+  BookOpen,
+  Download,
+  Eraser,
+  FolderOpen,
+  Hand,
+  Loader2,
+  Redo2,
+  RotateCcw,
+  Save,
+  Sparkles,
+  Trash2,
+  Wand2,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { gestureApi, type GestureResult, type GestureWork, type Stroke } from "../services/gestureApi";
+import { HAND_CONNECTIONS } from "../lib/handGestures";
+import { useHandLandmarker } from "../hooks/useHandLandmarker";
+import { gestureApi, localWork, type GestureWork, type Stroke } from "../services/gestureApi";
+import GestureGalleryModal from "./GestureGalleryModal";
 
-type Props = { onStatus?: (message: string) => void };
+type Props = { onStatus?: (message: string) => void; initialGalleryOpen?: boolean };
 
+const CANVAS_W = 960;
+const CANVAS_H = 540;
 const emptyWork: GestureWork = { strokes: [], transcript: [], lastGesture: "NO_HAND" };
+const PALETTE = ["#e76e43", "#2e716e", "#1d2626", "#c8408f", "#3068c9", "#f2b705"];
+const GESTURE_HOLD_MS = 900; // how long a command gesture (fist/victory/etc) must be steady before it fires
+const PINCH_JUMP = 0.12; // normalized distance; a bigger jump than this = re-acquired pinch, start a new stroke
+const ERASE_RADIUS = 0.045; // normalized
+
 const labels: Record<string, string> = {
   NO_HAND: "No hand",
   OPEN_PALM: "Open palm",
@@ -16,88 +39,145 @@ const labels: Record<string, string> = {
   HAND: "Hand",
 };
 
-export default function GestureCanvas({ onStatus }: Props) {
+function strokePath(context: CanvasRenderingContext2D, stroke: Stroke, w: number, h: number) {
+  const pts = stroke.points;
+  if (pts.length === 0) return;
+  context.strokeStyle = stroke.color;
+  context.fillStyle = stroke.color;
+  context.lineWidth = stroke.width;
+
+  if (pts.length === 1) {
+    const [x, y] = pts[0];
+    context.beginPath();
+    context.arc(x * w, y * h, Math.max(3, stroke.width / 2), 0, Math.PI * 2);
+    context.fill();
+    return;
+  }
+
+  // Quadratic-through-midpoints smoothing: turns a polyline of raw sample
+  // points into a continuous curve, which is what makes strokes look drawn
+  // rather than stitched together from straight segments.
+  context.beginPath();
+  context.moveTo(pts[0][0] * w, pts[0][1] * h);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i];
+    const [x1, y1] = pts[i + 1];
+    const mx = ((x0 + x1) / 2) * w;
+    const my = ((y0 + y1) / 2) * h;
+    context.quadraticCurveTo(x0 * w, y0 * h, mx, my);
+  }
+  const last = pts[pts.length - 1];
+  context.lineTo(last[0] * w, last[1] * h);
+  context.stroke();
+}
+
+export default function GestureCanvas({ onStatus, initialGalleryOpen }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const cameraRef = useRef<MediaStream | null>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const artRef = useRef<HTMLCanvasElement>(null);
-  const resultRef = useRef<GestureResult>({ gesture: "NO_HAND", confidence: 0, landmarks: [], handedness: null });
-  const lastCommandRef = useRef({ gesture: "", at: 0 });
+
   const workRef = useRef<GestureWork>(emptyWork);
-  const busyRef = useRef(false);
+  const redoRef = useRef<Stroke[]>([]);
+  const lastCommandRef = useRef({ gesture: "", at: 0 });
+  const wasPinchingRef = useRef(false);
+  const dirtyRef = useRef(false);
+  const autosaveTimerRef = useRef<number>();
+  const saveRef = useRef<() => void>(() => undefined);
 
   const [cameraReady, setCameraReady] = useState(false);
-  const [result, setResult] = useState<GestureResult>(resultRef.current);
   const [work, setWork] = useState<GestureWork>(emptyWork);
+  const [canRedo, setCanRedo] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "server" | "local-only" | "offline">("idle");
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [color, setColor] = useState(PALETTE[0]);
+  const [brushWidth, setBrushWidth] = useState(7);
+  const [eraserMode, setEraserMode] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(!!initialGalleryOpen);
 
-  const updateWork = useCallback((next: GestureWork) => {
-    workRef.current = next;
-    setWork(next);
-  }, []);
+  const { result, ready: trackerReady, loadError } = useHandLandmarker(videoRef, cameraReady);
 
   const redrawArt = useCallback((strokes: Stroke[]) => {
     const canvas = artRef.current;
     if (!canvas) return;
     const context = canvas.getContext("2d", { alpha: true });
     if (!context) return;
-
     context.clearRect(0, 0, canvas.width, canvas.height);
     context.lineCap = "round";
     context.lineJoin = "round";
+    for (const stroke of strokes) strokePath(context, stroke, canvas.width, canvas.height);
+  }, []);
 
-    for (const stroke of strokes) {
-      if (stroke.points.length === 0) continue;
-      context.strokeStyle = stroke.color;
-      context.fillStyle = stroke.color;
-      context.lineWidth = stroke.width;
+  const syncWork = useCallback(() => {
+    setWork({ ...workRef.current, strokes: [...workRef.current.strokes] });
+    setCanRedo(redoRef.current.length > 0);
+  }, []);
 
-      if (stroke.points.length === 1) {
-        const [x, y] = stroke.points[0];
-        context.beginPath();
-        context.arc(x * canvas.width, y * canvas.height, Math.max(3, stroke.width / 2), 0, Math.PI * 2);
-        context.fill();
-        continue;
-      }
-
-      context.beginPath();
-      stroke.points.forEach(([x, y], index) => {
-        if (index === 0) {
-          context.moveTo(x * canvas.width, y * canvas.height);
-        } else {
-          context.lineTo(x * canvas.width, y * canvas.height);
-        }
-      });
-      context.stroke();
-    }
+  const markDirty = useCallback(() => {
+    dirtyRef.current = true;
+    localWork.save(workRef.current);
+    window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = window.setTimeout(() => {
+      if (dirtyRef.current) saveRef.current();
+    }, 2500);
   }, []);
 
   const clearCanvas = useCallback(() => {
-    updateWork({ ...workRef.current, strokes: [], lastGesture: "FIST" });
-  }, [updateWork]);
+    redoRef.current = [];
+    workRef.current = { ...workRef.current, strokes: [], lastGesture: "FIST" };
+    redrawArt([]);
+    syncWork();
+    markDirty();
+  }, [markDirty, redrawArt, syncWork]);
 
   const undo = useCallback(() => {
-    updateWork({
-      ...workRef.current,
-      strokes: workRef.current.strokes.slice(0, -1),
-      lastGesture: "VICTORY",
-    });
-  }, [updateWork]);
+    if (workRef.current.strokes.length === 0) return;
+    const removed = workRef.current.strokes[workRef.current.strokes.length - 1];
+    redoRef.current = [...redoRef.current, removed];
+    workRef.current = { ...workRef.current, strokes: workRef.current.strokes.slice(0, -1), lastGesture: "VICTORY" };
+    redrawArt(workRef.current.strokes);
+    syncWork();
+    markDirty();
+  }, [markDirty, redrawArt, syncWork]);
+
+  const redo = useCallback(() => {
+    if (redoRef.current.length === 0) return;
+    const restored = redoRef.current[redoRef.current.length - 1];
+    redoRef.current = redoRef.current.slice(0, -1);
+    workRef.current = { ...workRef.current, strokes: [...workRef.current.strokes, restored] };
+    redrawArt(workRef.current.strokes);
+    syncWork();
+    markDirty();
+  }, [markDirty, redrawArt, syncWork]);
 
   const save = useCallback(async () => {
     setSaving(true);
     setError("");
+    localWork.save(workRef.current);
     try {
       const saved = await gestureApi.saveWork(workRef.current);
-      updateWork(saved);
+      workRef.current = saved;
+      dirtyRef.current = false;
+      setSaveStatus("server");
+      setLastSavedAt(Date.now());
+      syncWork();
       onStatus?.("Workspace saved to your account");
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "Could not save workspace");
+      // The drawing is never lost: it's already in localStorage above.
+      dirtyRef.current = false;
+      setSaveStatus("local-only");
+      setLastSavedAt(Date.now());
+      setError(nextError instanceof Error ? nextError.message : "Could not save to the server");
     } finally {
       setSaving(false);
     }
-  }, [onStatus, updateWork]);
+  }, [onStatus, syncWork]);
+
+  useEffect(() => {
+    saveRef.current = () => void save();
+  }, [save]);
 
   const exportPng = useCallback(() => {
     const canvas = artRef.current;
@@ -108,22 +188,62 @@ export default function GestureCanvas({ onStatus }: Props) {
     link.click();
   }, []);
 
-  // Initial load
+  const getCurrentSnapshot = useCallback(() => {
+    const canvas = artRef.current;
+    if (!canvas) return null;
+    // Downscale to a small thumbnail so the gallery list stays light to load.
+    const thumbCanvas = document.createElement("canvas");
+    thumbCanvas.width = 240;
+    thumbCanvas.height = 135;
+    const ctx = thumbCanvas.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#fcfbf8";
+      ctx.fillRect(0, 0, thumbCanvas.width, thumbCanvas.height);
+      ctx.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+    }
+    return { work: workRef.current, thumbnail: thumbCanvas.toDataURL("image/png", 0.8) };
+  }, []);
+
+  const openFromGallery = useCallback(
+    (loaded: GestureWork) => {
+      redoRef.current = [];
+      workRef.current = loaded;
+      redrawArt(loaded.strokes);
+      syncWork();
+      markDirty();
+    },
+    [markDirty, redrawArt, syncWork]
+  );
+
+  // Initial load: prefer the server copy, fall back to this device's local backup.
   useEffect(() => {
     let mounted = true;
     void gestureApi
       .getWork()
       .then((saved) => {
-        if (mounted) {
-          updateWork(saved);
-          redrawArt(saved.strokes);
-        }
+        if (!mounted) return;
+        const local = localWork.load();
+        const chosen = saved.strokes.length > 0 || !local ? saved : local;
+        workRef.current = chosen;
+        setSaveStatus("server");
+        redrawArt(chosen.strokes);
+        syncWork();
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!mounted) return;
+        const local = localWork.load();
+        if (local) {
+          workRef.current = local;
+          redrawArt(local.strokes);
+          syncWork();
+        }
+        setSaveStatus("offline");
+      });
     return () => {
       mounted = false;
+      window.clearTimeout(autosaveTimerRef.current);
     };
-  }, [redrawArt, updateWork]);
+  }, [redrawArt, syncWork]);
 
   // Camera initialization
   useEffect(() => {
@@ -149,65 +269,52 @@ export default function GestureCanvas({ onStatus }: Props) {
     };
   }, []);
 
-  // Gesture Recognition Polling Loop
   useEffect(() => {
-    let mounted = true;
-    const timer = window.setInterval(async () => {
-      const video = videoRef.current;
-      if (!mounted || busyRef.current || !video || video.readyState < 2 || video.videoWidth === 0) return;
+    if (loadError) setError(loadError);
+  }, [loadError]);
 
-      busyRef.current = true;
-      const capture = document.createElement("canvas");
-      capture.width = 960;
-      capture.height = 540;
-      const ctx = capture.getContext("2d", { willReadFrequently: true });
-      ctx?.drawImage(video, 0, 0, capture.width, capture.height);
-
-      try {
-        const next = await gestureApi.recognize(capture.toDataURL("image/jpeg", 0.8));
-        if (!mounted) return;
-
-        resultRef.current = next;
-        setResult(next);
-
-        const now = Date.now();
-        const previous = lastCommandRef.current;
-
-        if (next.confidence >= 0.62 && next.gesture !== "NO_HAND" && (next.gesture !== previous.gesture || now - previous.at > 1800)) {
-          lastCommandRef.current = { gesture: next.gesture, at: now };
-          if (next.gesture === "FIST") clearCanvas();
-          if (next.gesture === "VICTORY") undo();
-          if (next.gesture === "THUMBS_UP") void save();
-          if (next.gesture !== "PINCH" && next.gesture !== "FIST" && next.gesture !== "VICTORY" && next.gesture !== "THUMBS_UP") {
-            updateWork({
-              ...workRef.current,
-              transcript: [...workRef.current.transcript, next.gesture].slice(-100),
-              lastGesture: next.gesture,
-            });
-          }
-        }
-      } catch (nextError) {
-        if (mounted) setError(nextError instanceof Error ? nextError.message : "Gesture recognition unavailable");
-      } finally {
-        busyRef.current = false;
-      }
-    }, 200);
-
-    return () => {
-      mounted = false;
-      window.clearInterval(timer);
-    };
-  }, [clearCanvas, save, undo, updateWork]);
-
-  // Landmark & Pinch Stroke Renderer Loop
   useEffect(() => {
     const overlay = overlayRef.current;
     const art = artRef.current;
-    if (!overlay || !art) return;
+    if (overlay) {
+      overlay.width = CANVAS_W;
+      overlay.height = CANVAS_H;
+    }
+    if (art) {
+      art.width = CANVAS_W;
+      art.height = CANVAS_H;
+    }
+  }, []);
 
-    overlay.width = art.width = 960;
-    overlay.height = art.height = 540;
+  // Keyboard shortcuts: Ctrl/Cmd+Z undo, Shift+Ctrl/Cmd+Z redo, Ctrl/Cmd+S save.
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const mod = event.ctrlKey || event.metaKey;
+      if (!mod) return;
+      if (event.key.toLowerCase() === "z" && event.shiftKey) {
+        event.preventDefault();
+        redo();
+      } else if (event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        undo();
+      } else if (event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        redo();
+      } else if (event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void save();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [redo, save, undo]);
 
+  // Main per-frame reaction to the hand tracker: skeleton overlay, discrete
+  // command gestures (debounced so a held pose only fires once), and pinch
+  // draw / erase.
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
     const context = overlay.getContext("2d");
     if (!context) return;
 
@@ -215,63 +322,96 @@ export default function GestureCanvas({ onStatus }: Props) {
     const points = result.landmarks;
 
     if (points.length === 21) {
-      context.fillStyle = "#b7ded5";
-      context.strokeStyle = "rgba(183, 222, 213, 0.72)";
+      context.fillStyle = eraserMode ? "#d16b6b" : "#b7ded5";
+      context.strokeStyle = eraserMode ? "rgba(209,107,107,0.72)" : "rgba(183, 222, 213, 0.72)";
       context.lineWidth = 2;
 
-      const links = [
-        [0, 1], [1, 2], [2, 3], [3, 4],
-        [0, 5], [5, 6], [6, 7], [7, 8],
-        [5, 9], [9, 10], [10, 11], [11, 12],
-        [9, 13], [13, 14], [14, 15], [15, 16],
-        [13, 17], [17, 18], [18, 19], [19, 20],
-        [0, 17],
-      ];
-
-      links.forEach(([a, b]) => {
+      HAND_CONNECTIONS.forEach(([a, b]) => {
         context.beginPath();
-        context.moveTo((1 - points[a].x) * 960, points[a].y * 540);
-        context.lineTo((1 - points[b].x) * 960, points[b].y * 540);
+        context.moveTo((1 - points[a].x) * CANVAS_W, points[a].y * CANVAS_H);
+        context.lineTo((1 - points[b].x) * CANVAS_W, points[b].y * CANVAS_H);
         context.stroke();
       });
-
       points.forEach((point) => {
         context.beginPath();
-        context.arc((1 - point.x) * 960, point.y * 540, 4, 0, Math.PI * 2);
+        context.arc((1 - point.x) * CANVAS_W, point.y * CANVAS_H, 4, 0, Math.PI * 2);
         context.fill();
       });
 
-      if (result.gesture === "PINCH" && result.confidence >= 0.62) {
-        const tip = points[8];
-        const x = 1 - tip.x;
-        const y = tip.y;
-        const previous = workRef.current.strokes.at(-1);
-        const nextPoint: [number, number] = [x, y];
+      const now = Date.now();
+      const previousCommand = lastCommandRef.current;
+      const isPinch = result.gesture === "PINCH" && result.confidence >= 0.62;
 
-        if (previous && previous.color === "#e76e43" && previous.points.length > 0) {
-          updateWork({
-            ...workRef.current,
-            strokes: [
-              ...workRef.current.strokes.slice(0, -1),
-              { ...previous, points: [...previous.points, nextPoint] },
-            ],
-            lastGesture: "PINCH",
-          });
-        } else {
-          updateWork({
-            ...workRef.current,
-            strokes: [...workRef.current.strokes, { points: [nextPoint], color: "#e76e43", width: 7 }],
-            lastGesture: "PINCH",
-          });
+      // Discrete, debounced commands — anything that isn't the continuous pinch draw.
+      if (!isPinch && result.confidence >= 0.62 && result.gesture !== "NO_HAND") {
+        const steadyLongEnough = result.gesture === previousCommand.gesture && now - previousCommand.at > GESTURE_HOLD_MS;
+        if (result.gesture !== previousCommand.gesture) {
+          lastCommandRef.current = { gesture: result.gesture, at: now };
+        } else if (steadyLongEnough && now - previousCommand.at < GESTURE_HOLD_MS + 250) {
+          if (result.gesture === "FIST") clearCanvas();
+          else if (result.gesture === "VICTORY") undo();
+          else if (result.gesture === "THUMBS_UP") void save();
+          else if (result.gesture === "OPEN_PALM") setEraserMode((prev) => !prev);
+          lastCommandRef.current = { gesture: result.gesture, at: now + 100000 }; // fire once per hold
+          workRef.current = { ...workRef.current, transcript: [...workRef.current.transcript, result.gesture].slice(-100) };
+          syncWork();
         }
-        redrawArt(workRef.current.strokes);
+      } else if (!isPinch) {
+        lastCommandRef.current = { gesture: "", at: 0 };
       }
-    }
-  }, [redrawArt, result, updateWork]);
 
-  useEffect(() => {
-    redrawArt(work.strokes);
-  }, [redrawArt, work.strokes]);
+      if (isPinch) {
+        const tip = points[8];
+        const point: [number, number] = [1 - tip.x, tip.y];
+
+        if (eraserMode) {
+          const before = workRef.current.strokes.length;
+          const kept = workRef.current.strokes.filter(
+            (stroke) => !stroke.points.some(([sx, sy]) => Math.hypot(sx - point[0], sy - point[1]) < ERASE_RADIUS)
+          );
+          if (kept.length !== before) {
+            workRef.current = { ...workRef.current, strokes: kept, lastGesture: "PINCH" };
+            redrawArt(kept);
+            syncWork();
+            markDirty();
+          }
+        } else {
+          const strokes = workRef.current.strokes;
+          const previous = strokes.at(-1);
+          const previousPoint = previous?.points.at(-1);
+          const jumped = previousPoint ? Math.hypot(previousPoint[0] - point[0], previousPoint[1] - point[1]) > PINCH_JUMP : true;
+
+          if (wasPinchingRef.current && previous && previous.color === color && previous.width === brushWidth && !jumped) {
+            previous.points.push(point);
+          } else {
+            redoRef.current = [];
+            workRef.current = { ...workRef.current, strokes: [...strokes, { points: [point], color, width: brushWidth }] };
+          }
+          workRef.current.lastGesture = "PINCH";
+          redrawArt(workRef.current.strokes);
+        }
+        wasPinchingRef.current = true;
+      } else {
+        if (wasPinchingRef.current) {
+          syncWork();
+          markDirty();
+        }
+        wasPinchingRef.current = false;
+      }
+    } else {
+      wasPinchingRef.current = false;
+    }
+  }, [brushWidth, clearCanvas, color, eraserMode, markDirty, redrawArt, result, save, syncWork, undo]);
+
+  const savedLabel = (() => {
+    if (saving) return "Saving…";
+    if (!lastSavedAt) return saveStatus === "offline" ? "Working offline — saved to this device only" : "Not saved yet";
+    const secondsAgo = Math.max(0, Math.round((Date.now() - lastSavedAt) / 1000));
+    const where = saveStatus === "server" ? "your account" : "this device only";
+    if (secondsAgo < 5) return `Saved to ${where} just now`;
+    if (secondsAgo < 60) return `Saved to ${where} ${secondsAgo}s ago`;
+    return `Saved to ${where} ${Math.round(secondsAgo / 60)}m ago`;
+  })();
 
   return (
     <section className="gesture-workspace">
@@ -286,8 +426,8 @@ export default function GestureCanvas({ onStatus }: Props) {
             leaves the frame.
           </p>
         </div>
-        <div className={`gesture-status ${cameraReady ? "live" : ""}`}>
-          <span /> {cameraReady ? "LIVE RECOGNITION" : "STARTING CAMERA"}
+        <div className={`gesture-status ${cameraReady && trackerReady ? "live" : ""}`}>
+          <span /> {cameraReady && trackerReady ? `LIVE · ${result.fps || 0} FPS` : "STARTING CAMERA"}
         </div>
       </div>
 
@@ -300,22 +440,27 @@ export default function GestureCanvas({ onStatus }: Props) {
           <span>
             <b>1</b>
             <strong>Pinch</strong>
-            <small>Draw with index finger</small>
+            <small>Draw or erase with index finger</small>
           </span>
           <span>
             <b>2</b>
-            <strong>Fist</strong>
+            <strong>Fist (hold)</strong>
             <small>Clear canvas</small>
           </span>
           <span>
             <b>3</b>
-            <strong>Victory</strong>
+            <strong>Victory (hold)</strong>
             <small>Undo stroke</small>
           </span>
           <span>
             <b>4</b>
-            <strong>Thumbs up</strong>
+            <strong>Thumbs up (hold)</strong>
             <small>Save workspace</small>
+          </span>
+          <span>
+            <b>5</b>
+            <strong>Open palm (hold)</strong>
+            <small>Toggle eraser</small>
           </span>
         </div>
       </div>
@@ -349,27 +494,78 @@ export default function GestureCanvas({ onStatus }: Props) {
               <Hand size={19} />
             </div>
             <div>
-              <span>DETECTED GESTURE</span>
+              <span>DETECTED GESTURE {eraserMode ? "· ERASER ON" : ""}</span>
               <strong>{labels[result.gesture] ?? result.gesture}</strong>
             </div>
             <b>{Math.round(result.confidence * 100)}%</b>
           </div>
 
+          <div className="gesture-toolbar">
+            <div className="gesture-palette">
+              {PALETTE.map((swatch) => (
+                <button
+                  key={swatch}
+                  aria-label={`Use color ${swatch}`}
+                  className={`gesture-swatch ${color === swatch && !eraserMode ? "active" : ""}`}
+                  style={{ background: swatch }}
+                  onClick={() => {
+                    setColor(swatch);
+                    setEraserMode(false);
+                  }}
+                />
+              ))}
+              <input
+                type="color"
+                aria-label="Custom color"
+                value={color}
+                onChange={(event) => {
+                  setColor(event.target.value);
+                  setEraserMode(false);
+                }}
+                className="gesture-color-input"
+              />
+            </div>
+            <label className="gesture-brush">
+              <span>Brush {brushWidth}px</span>
+              <input
+                type="range"
+                min={2}
+                max={24}
+                value={brushWidth}
+                onChange={(event) => setBrushWidth(Number(event.target.value))}
+              />
+            </label>
+            <button
+              className={`button button-ghost ${eraserMode ? "active" : ""}`}
+              onClick={() => setEraserMode((prev) => !prev)}
+              title="Toggle eraser (or hold an open palm)"
+            >
+              <Wand2 size={15} /> {eraserMode ? "Erasing" : "Eraser"}
+            </button>
+          </div>
+
           <div className="gesture-actions">
-            <button className="button button-ghost" onClick={clearCanvas}>
+            <button className="button button-ghost" onClick={clearCanvas} title="Clear canvas">
               <Eraser size={15} /> Clear
             </button>
-            <button className="button button-ghost" onClick={undo}>
+            <button className="button button-ghost" onClick={undo} disabled={work.strokes.length === 0} title="Undo (Ctrl+Z)">
               <RotateCcw size={15} /> Undo
             </button>
-            <button className="button button-ghost" onClick={exportPng}>
+            <button className="button button-ghost" onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">
+              <Redo2 size={15} /> Redo
+            </button>
+            <button className="button button-ghost" onClick={exportPng} title="Export as PNG">
               <Download size={15} /> PNG
             </button>
-            <button className="button button-primary" onClick={() => void save()} disabled={saving}>
+            <button className="button button-primary" onClick={() => void save()} disabled={saving} title="Save (Ctrl+S)">
               {saving ? <Loader2 className="spin" size={15} /> : <Save size={15} />}
               {saving ? "Saving" : "Save"}
             </button>
+            <button className="button button-ghost" onClick={() => setGalleryOpen(true)} title="My saved works">
+              <FolderOpen size={15} /> My Saved Works
+            </button>
           </div>
+          <div className="gesture-save-status">{savedLabel}</div>
         </div>
 
         {/* Canvas Output Card */}
@@ -406,6 +602,13 @@ export default function GestureCanvas({ onStatus }: Props) {
           <Trash2 size={15} /> {error}
         </div>
       )}
+
+      <GestureGalleryModal
+        open={galleryOpen}
+        onClose={() => setGalleryOpen(false)}
+        onOpenWork={openFromGallery}
+        getCurrentSnapshot={getCurrentSnapshot}
+      />
     </section>
   );
 }

@@ -1,9 +1,9 @@
 import type { Request, Response } from "express";
-import jwt from "jsonwebtoken";
 import { connectDatabase, DatabaseError } from "../config/database";
 import { config } from "../config/env";
 import { User } from "../models/User";
 import { FaceServiceError, cosineSimilarity, generateEmbedding } from "../services/faceService";
+import { clearSessionCookie, setSessionCookie } from "../services/session";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -38,17 +38,6 @@ function averageEmbeddings(embeddings: number[][]) {
   const average = Array.from({ length }, (_, index) => embeddings.reduce((sum, embedding) => sum + embedding[index], 0) / embeddings.length);
   const magnitude = Math.sqrt(average.reduce((sum, value) => sum + value ** 2, 0));
   return magnitude === 0 ? average : average.map((value) => value / magnitude);
-}
-
-function setSessionCookie(res: Response, userId: string) {
-  const token = jwt.sign({ sub: userId }, config.jwtSecret, { expiresIn: "7d" });
-  res.cookie(config.authCookieName, token, {
-    httpOnly: true,
-    secure: config.nodeEnv === "production",
-    sameSite: "lax",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-    path: "/",
-  });
 }
 
 export async function register(req: Request, res: Response) {
@@ -113,12 +102,7 @@ export async function login(req: Request, res: Response) {
 }
 
 export function logout(_req: Request, res: Response) {
-  res.clearCookie(config.authCookieName, {
-    httpOnly: true,
-    secure: config.nodeEnv === "production",
-    sameSite: "lax",
-    path: "/",
-  });
+  clearSessionCookie(res);
   return res.json({ success: true });
 }
 
