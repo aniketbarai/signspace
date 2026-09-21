@@ -1,6 +1,7 @@
 import { ArrowRight, Camera, Check, Fingerprint, LockKeyhole, ScanFace, Sparkles } from "lucide-react";
 import { Link } from "wouter";
 import AppShell from "../components/AppShell";
+import { useAuth } from "../context/AuthContext";
 
 const steps = [
   { number: "01", icon: Camera, title: "Open your camera", text: "Give your browser permission when you are ready. Nothing starts in the background." },
@@ -9,6 +10,9 @@ const steps = [
 ];
 
 export default function Home() {
+  const { user, loading } = useAuth();
+  const firstName = user?.name.split(" ")[0];
+
   return (
     <AppShell>
       <main>
@@ -17,7 +21,7 @@ export default function Home() {
             <div className="eyebrow"><span className="eyebrow-pulse" /> PHASE 01 · FACE AUTHENTICATION</div>
             <h1>Access that feels <em>human.</em></h1>
             <p className="hero-lede">A more natural first step toward communication without barriers. Sign in with your face, then get ready for what comes next.</p>
-            <div className="hero-actions"><Link href="/register" className="button button-primary">Register with face <ArrowRight size={17} /></Link><Link href="/login" className="button button-ghost">Login with face <span className="button-key">↗</span></Link></div>
+            {!loading && (user ? <div className="hero-actions"><Link href="/dashboard" className="button button-primary">Open your workspace <ArrowRight size={17} /></Link><span className="signed-in-note">Signed in as {firstName}</span></div> : <div className="hero-actions"><Link href="/register" className="button button-primary">Register with face <ArrowRight size={17} /></Link><Link href="/login" className="button button-ghost">Login with face <span className="button-key">↗</span></Link></div>)}
             <div className="hero-trust"><div className="avatar-stack"><span>A</span><span>R</span><span>M</span><span className="avatar-more">+</span></div><span>Built for a quieter, more inclusive web</span></div>
           </div>
           <div className="hero-visual">

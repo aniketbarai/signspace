@@ -2,6 +2,7 @@ import { ArrowRight, Check, Info, Loader2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import FaceCamera, { type FaceCameraHandle } from "../components/FaceCamera";
+import { useAuth } from "../context/AuthContext";
 import { authApi } from "../services/api";
 import AuthLayout from "./AuthLayout";
 
@@ -9,6 +10,7 @@ type CameraState = "idle" | "requesting" | "ready" | "denied" | "unavailable";
 
 export default function Login() {
   const [, navigate] = useLocation();
+  const { refresh } = useAuth();
   const cameraRef = useRef<FaceCameraHandle>(null);
   const [email, setEmail] = useState("");
   const [cameraState, setCameraState] = useState<CameraState>("idle");
@@ -26,6 +28,7 @@ export default function Login() {
     setBusy(true);
     try {
       await authApi.login({ email: email.trim(), image });
+      await refresh();
       setDone(true);
       window.setTimeout(() => navigate("/dashboard"), 700);
     } catch (nextError) {
