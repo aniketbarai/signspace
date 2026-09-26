@@ -55,7 +55,10 @@ export async function register(req: Request, res: Response) {
     if (existing) return res.status(409).json({ success: false, message: "An account already exists for this email" });
 
     const images = decodeImages(body.images);
-    const embeddings = await Promise.all(images.map((image) => generateEmbedding(image)));
+    const embeddings: number[][] = [];
+    for (const image of images) {
+      embeddings.push(await generateEmbedding(image));
+    }
     const embedding = averageEmbeddings(embeddings);
     const user = await User.create({ name, email, faceEmbedding: embedding });
     return res.status(201).json({ success: true, message: "Face registered successfully", user: safeUser(user) });

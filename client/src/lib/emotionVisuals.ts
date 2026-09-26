@@ -40,15 +40,6 @@ type FaceConnectionTuple = [number, number];
 
 /**
  * Converts MediaPipe face connections into [start, end] tuples.
- *
- * Depending on the installed version of @mediapipe/tasks-vision,
- * connections may be returned as either:
- *
- *   [10, 338]
- *
- * or:
- *
- *   { start: 10, end: 338 }
  */
 function normalizeConnections(value: unknown): FaceConnectionTuple[] {
   if (!Array.isArray(value)) {

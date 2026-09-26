@@ -1,14 +1,5 @@
 // Turns MediaPipe FaceLandmarker blendshape output (52 named facial-muscle
 // coefficients, each 0..1) into a small set of readable emotion scores.
-//
-// This is not a guess dressed up as science: each blendshape is a real
-// Facial Action Coding System (FACS)-style measurement of one muscle group
-// (e.g. how far a mouth corner is pulled up, how tight an eyelid is
-// squeezed). Grouping them by the combinations psychologists associate with
-// each expression is the standard approach used by most browser-based
-// emotion tools built on this model, and it updates every frame directly
-// from the tracked face, so it reacts to the actual expression instead of
-// being a fixed animation.
 
 export type BlendshapeMap = Record<string, number>;
 
