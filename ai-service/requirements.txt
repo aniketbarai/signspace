@@ -8,4 +8,4 @@ tf-keras==2.19.0
 protobuf==4.25.8
 pydantic==2.10.6
 numpy==1.26.4
-
+joblib==1.4.2

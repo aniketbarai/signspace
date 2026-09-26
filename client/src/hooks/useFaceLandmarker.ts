@@ -30,7 +30,7 @@ const idle: FaceTrackingResult = { present: false, landmarks: [], emotion: NEUTR
  * turned into emotion scores every frame via blendshapesToEmotion, then
  * smoothed so the readout is stable enough to read.
  */
-export function useFaceLandmarker(videoRef: React.RefObject<HTMLVideoElement>, active: boolean) {
+export function useFaceLandmarker(videoRef: React.RefObject<HTMLVideoElement | null>, active: boolean) {
   const [result, setResult] = useState<FaceTrackingResult>(idle);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState("");

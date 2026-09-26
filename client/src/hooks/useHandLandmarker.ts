@@ -23,7 +23,7 @@ const idle: HandTrackingResult = { gesture: "NO_HAND", confidence: 0, landmarks:
  * a second: this hook drives at native video frame rate, which is what makes
  * pinch-to-draw feel smooth instead of stepped.
  */
-export function useHandLandmarker(videoRef: React.RefObject<HTMLVideoElement>, active: boolean) {
+export function useHandLandmarker(videoRef: React.RefObject<HTMLVideoElement | null>, active: boolean) {
   const [result, setResult] = useState<HandTrackingResult>(idle);
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState("");

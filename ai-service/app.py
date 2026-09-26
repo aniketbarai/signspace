@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from face_service import FaceInputError, create_embedding
 from hand_service import HandInputError, recognize_gesture
+from emotion_service import predict_expression
 
 app = FastAPI(title="sign/space face AI service", version="1.0.0")
 app.add_middleware(
@@ -25,6 +26,10 @@ class EmbeddingRequest(BaseModel):
 
 class HandRequest(BaseModel):
     image: str
+
+
+class EmotionRequest(BaseModel):
+    blendshapes: dict[str, float]
 
 
 @app.get("/health")
@@ -57,6 +62,14 @@ def recognize_hand_gesture(request: HandRequest):
             status_code=503,
             content={"success": False, "message": "Hand recognition service failed"},
         )
+
+
+@app.post("/predict-expression")
+def predict_facial_expression(request: EmotionRequest):
+    try:
+        return {"success": True, **predict_expression(request.blendshapes)}
+    except Exception:
+        return JSONResponse(status_code=503, content={"success": False, "message": "Facial expression model failed"})
 
 
 if __name__ == "__main__":

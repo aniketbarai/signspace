@@ -82,7 +82,7 @@ export default function GestureCanvas({ onStatus, initialGalleryOpen }: Props) {
   const lastCommandRef = useRef({ gesture: "", at: 0 });
   const wasPinchingRef = useRef(false);
   const dirtyRef = useRef(false);
-  const autosaveTimerRef = useRef<number>();
+  const autosaveTimerRef = useRef<number | undefined>(undefined);
   const saveRef = useRef<() => void>(() => undefined);
 
   const [cameraReady, setCameraReady] = useState(false);

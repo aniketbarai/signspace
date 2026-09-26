@@ -12,3 +12,8 @@ __pycache__/
 *.py[cod]
 .venv/
 ai-service/.venv/
+ml/data/*.csv
+ml/models/*
+!ml/models/.gitkeep
+*.metrics.json
+*.confusion-matrix.png
